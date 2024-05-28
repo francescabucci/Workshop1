@@ -2,7 +2,7 @@
 title: "metabolomicsProcessingDIY"
 author: 
 - "DeniseSl22"
-- "YourGithubUserName"
+- "francescabucci"
 date: "17/05/24"
 output:
  md_document:
@@ -11,6 +11,9 @@ always_allow_html: true
 ---
 ## Introduction
 In this section of the workflow, we will obtain the metabolomics data and apply filtering options, to create a dataset ready for further statistical and pathway analysis (on Thursday).
+```{r}
+
+```
 
 ## First, we setup the required libraries to get started.
 ```{r setup, warning=FALSE, message=FALSE}
@@ -27,9 +30,14 @@ library(stringr)
 ```{r}
 #Download ‘readxl’ package
 #Load the ‘readxl’ package
+if(!"readxl" %in% installed.packages()){install.packages("readxl")}
+library("readxl")
 
 #Add data location as variable
+dataLocation <- paste0(getwd(), '/Data/NoMa_NMR_intervention_GEOcodes_Sent Susan.xlsx')
+
 #Read the first tab of the data file
+metabolomicsData <- read_excel(dataLocation, 1)
 
 #Make a copy of the data to compare against if needed
 ```
@@ -37,6 +45,7 @@ library(stringr)
 ## Second programming tasks
 ```{r}
 #Use the search box to find sample ‘2_A5’
+
 
 # Convert the textual 'NA' labels with the real NA (not available)
 metabolomicsData[metabolomicsData == "NA"] <- NA
@@ -48,8 +57,15 @@ sum(is.na(metabolomicsData$`Sample name` == "...")) ##Fill in the missing inform
 ####..... missing step ...####
 ####..... missing step ...####
 
+if(!"heatmaply" %in% installed.packages()){install.packages("heatmaply")}
+library("heatmaply")
+
 #Visualize this information in a heatmap
 heatmaply::heatmaply(is.na10(metabolomicsData[,3:100], grid_gap = 1, colors = heat.colors(200), showticklabels = c(T, F), margins = c(80, 10)))
+#lipids measured on horizontal axis, samples on vertical axis
+# in the legend1 means NA values and 0 means lipids were measured
+#is.na10 shows all NAs as number between 1 and 0
+
 ```
 
 ## Third programming tasks
@@ -62,6 +78,8 @@ metabolomicsData <- metabolomicsData[complete.cases(metabolomicsData[ , 3:length
 
 # Visualize all information in a heatmap
 ####..... missing step ...#### Tip: use the previous line of code for heatmaply, without counting NAs. When in doubt, type ?heatmaply in the console below, to open a help menu for this function and example.
+
+heatmaply::heatmaply(metabolomicsData[,3:100], grid_gap = 1, colors = heat.colors(200), showticklabels = c(T, F), margins = c(80, 10))
 ```
 
 ## Fourth programming tasks: check data distribution
@@ -73,15 +91,22 @@ metabolomicsData <- subset(metabolomicsData, !is.na(metabolomicsData$...))
 metabolomicsData <- subset(metabolomicsData, metabolomicsData$Sample.name != '...')
 
 # Download the file 'targets.csv' from Surfdrive, add this to the Data folder, and change the location of data you want to load
-dataLocation <- paste0(getwd(), '/Data/ ... .csv')
+dataLocation <- paste0(getwd(), '/Data/targets.csv')
 
 # Load the targets data
 treatmentData <- read.csv(dataLocation, header = TRUE)
 
 # Clean up the sample names (since they are not the same for metabolomics)
-treatmentData$SampleName<-gsub("X","",as.character(treatmentData$SampleName)) #Remove the 'X' from sample names
-treatmentData$SampleName<-gsub("\\..*","",as.character(treatmentData$SampleName)) #Remove all data after the '.'
-treatmentData$...<-gsub("line","",as.character(treatmentData$...)) #Remove the word 'line' in the second column (Timepoint)
+
+treatmentData$SampleName<-gsub("X","",as.character(treatmentData$SampleName))
+#Remove the 'X' from sample names
+
+treatmentData$SampleName<-gsub("\\..*","",as.character(treatmentData$SampleName))
+#Remove all data after the '.'
+
+
+treatmentData$Timepoint<-gsub("line","",as.character(treatmentData$Timepoint))
+#Remove the word 'line' in the second column (Timepoint)
 
 #rename columns of treatmentData to match with metabolomics data
 colnames(treatmentData) <- c("Sample.name","Timepoint","Diet" )
@@ -90,7 +115,8 @@ colnames(treatmentData) <- c("Sample.name","Timepoint","Diet" )
 metabolomicsDataGroups <- merge(treatmentData, metabolomicsData,by="Sample.name")
 
 #Sanity check: do all the timepoints (base,end) from treatmentData match with the metabolomics data time column
-all(metabolomicsDataGroups$Timepoint == metabolomicsDataGroups$time) ##If this is FALSE, please check your data against the Copy you made at the start.
+all(metabolomicsDataGroups$Timepoint == metabolomicsDataGroups$time)
+##If this is FALSE, please check your data against the Copy you made at the start.
 
 #Count number of columns
 ##columns <- ncol(metabolomicsDataGroups) ##To apply transformation on all columns
@@ -118,19 +144,22 @@ hist(metabolomicsDataGroups[,5], col='steelblue', main='Original')
 hist(metabolomicsDataGroups_transformed[,5], col='coral2', main=transformation)
 
 ## Test if the transformation creates a normally distributed dataset (alpha >= 0.05)
-##Calculate all Shapiro values for raw and transformed data:
+##Calculate all Shapiro values for raw data:
 metabolomicsDataGroups_Shapiro <- lapply(metabolomicsDataGroups[,5:columns], shapiro.test)
+##Calculate all Shapiro values for transformed data:
 metabolomicsDataGroups_transformed_Shapiro <- lapply(metabolomicsDataGroups_transformed[,5:columns], shapiro.test)
 
-#Obtain the p-values for raw and transformed data
+#Obtain the p-values for raw data
 metabolomicsDataGroups_Shapiro_pvalues <- do.call(rbind, metabolomicsDataGroups_Shapiro)
+#Obtain the p-values for transformed data
 metabolomicsDataGroups_transformed_Shapiro_pvalues <- do.call(rbind, metabolomicsDataGroups_transformed_Shapiro)
 
 ## Count how often the p-value is above 0.05, to obtain an estimate of achieved normality due to transformation
 metabolomicsDataGroups_Shapiro_pvalues_sum <- sum(metabolomicsDataGroups_Shapiro_pvalues[,2] >= 0.05, na.rm=TRUE)
 metabolomicsDataGroups_transformed_Shapiro_pvalues_sum <- sum(metabolomicsDataGroups_transformed_Shapiro_pvalues[,2] >= 0.05, na.rm=TRUE)
 
-percentageThreshold <- floor(((columns)/10)*7.5) #Now set at 75% (7.5); can be strickter if the data permits this.
+percentageThreshold <- floor(((columns)/10)*7.5)
+#Now set at 75% (7.5); can be strickter if the data permits this.
 
 #Print relevant information:
 if(metabolomicsDataGroups_transformed_Shapiro_pvalues_sum[1] > percentageThreshold ){paste0("Data after ", transformation ," transformation seems to follow a normal distribution for 75% or more of your data")} else{
@@ -200,7 +229,7 @@ metabolomicsDataGroups_transformed %>%
 # Visualising ratio data
 ```{r}
 ### To be added by you!
-
+heatmaply::heatmaply(metabolomicsDataGroups_transformed[,5:102], grid_gap = 1, colors = heat.colors(200), showticklabels = c(T, F), margins = c(80, 10))
 # Find the correct dataframe, and use the right column numbers sequence.
 ```
 
@@ -224,9 +253,11 @@ mSet_treated_size <- nrow(mSet_treated)
 # T-test for one specified column:
 #tTestresults <- t.test(mSet_control$XXL.VLDL.P, mSet_treated$XXL.VLDL.P, alternative = "two.sided", var.equal = FALSE)
 
-# Ttest for all columns:
+# T-test for all columns:
 
 #####Task: create a variable 'grp' which uses the data in the 'Diet' column from the mSet_FINAL dataframe #####
+
+grp <- mSet_FINAL$Diet
 
 tests_list <- lapply(names(mSet_FINAL[5:ncol(mSet_FINAL)]), function(x) t.test(as.formula(paste0(x, "~ grp")), data = mSet_FINAL[,5:ncol(mSet_FINAL)]))
 
