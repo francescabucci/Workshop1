@@ -1,0 +1,162 @@
+---
+title: "RNAseq_Diet"
+author: "Susan Coort"
+date: "2024-05-20"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+W#Part 1 DESeq2 - from raw counts to differentially expressed genes
+# This script is to analyse RNAseq data from the dataset GSE106589 using DESeq2 package. 
+
+#clean workspace
+```{r}
+rm(list=ls())
+```
+
+# Set workdirectory
+```{r set working directory}
+if(!"knitr" %in% installed.packages()){
+  install.packages("knitr")
+}
+library(knitr)
+knitr:::input_dir()
+```
+
+#install required packages - if they are not installed yet - BiocManager is one of several possible installator apps. You can install packages also any other way.
+#Installation of DESeq2 will take a few minutes.
+```{r}
+if (!requireNamespace("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+BiocManager::install("DESeq2")
+BiocManager::install("ggplot2")
+BiocManager::install("tidyr")
+BiocManager::install("dplyr")
+BiocManager::install("stringr")
+BiocManager::install("ggfortify")
+
+#load required libraries
+library(DESeq2)
+library(ggplot2)
+library(ggfortify)
+library(tidyr)
+library(dplyr)
+library(stringr)
+```
+
+
+```{r}
+#load raw count data and create some overview plots.
+data = read.csv(file = 'GSE135448_geneCounts.csv', row.names = 1, header = TRUE)
+```
+
+#Task 1: Check the loaded data - is the datafile imported correctly?
+
+```{r}
+#Some raw count data visualisation with boxplot and PCA
+boxplot(log(data))
+```
+
+#Task 2: Provide the boxplot figure!
+
+```{r}
+PCA <- prcomp(t(data))
+autoplot(PCA, label = TRUE, label.size = 3)
+```
+
+#Task 3: Provide the PCA plot figure!
+
+```{r}
+#Load the metadata file. 
+metadata <- read.table(file = 'SraRunTable_Diet.txt', sep = ",", header = TRUE)
+```
+
+
+#Task 4: Check if the metadata file is correctly loaded!
+
+```{r}
+#Create the "dds" object from count data and metadata. The experimental design compares via diagnosis (COS vs control). This is a design if you have only one variable to compare experimental groups.
+dds <- DESeqDataSetFromMatrix(countData = data,
+                             colData = metadata,
+                             design = ~ diet_intervention, tidy = FALSE)
+```
+
+```{r}
+#Pre-filtering - technically not required, but will reduce memory size and increase speed if we remove samples with too low read counts.
+smallestGroupSize <- 3
+keep <- rowSums(counts(dds) >= 10) >= smallestGroupSize
+dds <- dds[keep,]
+```
+
+```{r}
+#run the DESeq2 function. This will take a while (up to 10 min are normal).
+dds <- DESeq(dds)
+```
+
+```{r}
+#result output
+resultsNames(dds)
+DEG <- results(dds)
+```
+
+#Task 5: What are the resultNames?
+
+```{r}
+#export the complete result file to CSV for later analysis
+write.csv(DEG, file = "DEG_LPvsHP.csv")
+#all significantly changed genes, all significantly upregulated genes, all significantly downregulated genes
+SigDEG <- DEG[DEG$pvalue < 0.05,]
+write.csv(SigDEG, file = "SigDEG_LPvsHP.csv")
+SigUP <- DEG[DEG$pvalue < 0.05 & DEG$log2FoldChange > 1,]
+write.csv(SigUP, file = "SigUP_LPvsHP.csv")
+SigDOWN <- DEG[DEG$pvalue < 0.05 & DEG$log2FoldChange < -1,]
+write.csv(SigDOWN, file = "SigDOWN_LPvsHP.csv")
+```
+
+#Check in your working directory if the csv files are created correctly.
+
+```{r}
+#Visualisation and interpretation of the results and the process
+
+#sort by log2FC
+DEG <- DEG[order(DEG$log2FoldChange),]
+head(DEG)
+```
+
+#Task 6: What are the most differently expressed genes?
+
+```{r}
+#Volcano plot
+par(mfrow=c(1,1))
+# Make a basic volcano plot
+with(DEG, plot(log2FoldChange, -log10(pvalue), pch=20, main="Volcano plot", xlim=c(-6,6)))
+# Add colored points: blue if log2FC < -1 and padj<0.05 and red if log2FC > 1 and padj<0.05)
+with(subset(DEG, padj<0.05 & log2FoldChange < -1), points(log2FoldChange, -log10(pvalue), pch=20, col="blue"))
+with(subset(DEG, padj<0.05 & log2FoldChange > 1), points(log2FoldChange, -log10(pvalue), pch=20, col="red"))
+```
+
+
+#Task 7: Provide the plot. What does it mean?
+
+```{r}
+#compare normalised counts vs. raw counts 
+dds_n <- estimateSizeFactors(dds); 
+dds_n <- counts(dds_n, normalized=TRUE)
+boxplot(log(dds_n))
+```
+
+#Task 8: Provide the boxplot to the table from task 2. Whats the difference?
+
+```{r}
+PCA <- prcomp(t(dds_n))
+autoplot(PCA, label = TRUE, label.size = 3)
+```
+
+#Task 9: Provide the PCA plot to the table from task 3. Whats the difference?

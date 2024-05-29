@@ -1,0 +1,256 @@
+---
+title: "Illumina_processiong"
+author: "Aishwarya""Guangya/Susan edited"
+date: "10/15/2022""23/05/2024"
+output: html_document
+---
+
+
+```{r set working directory}
+if(!"knitr" %in% installed.packages()){
+  install.packages("knitr")
+}
+library(knitr)
+knitr:::input_dir()
+```
+
+
+#clean workspace
+```{r}
+rm(list=ls())
+```
+
+
+```{r cars}
+# general config
+  baseDir <- 'datasets/'
+  bgxfile <- 'Annot/HumanHT-12_V4_0_R2_15002873_B.bgx'
+  setwd(baseDir)
+```
+
+
+```{r}
+if (!requireNamespace("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+BiocManager::install("limma")
+BiocManager::install("illuminaio")
+BiocManager::install("tidyverse")
+BiocManager::install("PCAtools")
+BiocManager::install("ggplot2")
+BiocManager::install("Biobase")
+install.packages("RColorBrewer")
+
+
+#load required libraries
+library(limma)
+library(RColorBrewer)
+library(illuminaio)
+library(tidyverse)
+library(PCAtools)
+library(ggplot2)
+library(Biobase)
+```
+
+
+```{r pressure, echo = FALSE}
+# read in the data and convert the data to an EListRaw object, which is a data object for single channel data
+  x <- read.table(paste0(baseDir, 'GSE176043_non-normalized.txt'),
+    header = TRUE, sep = '\t', stringsAsFactors = FALSE)
+  newnames <- colnames(read.table(paste0(baseDir, 'GSE176043_non-normalized.txt'),
+    header = TRUE, sep = '\t', stringsAsFactors = FALSE))
+  detectionpvalues <- x[,grep('Detection.Pval', colnames(x))]
+  x <- x[,-grep('Detection.Pval', colnames(x))]
+  probes <- x$ID.Ref
+  x <- data.matrix(x[,2:ncol(x)])
+  rownames(x) <- probes
+```
+
+
+
+```{r}
+#plot the expression data (before normalisation)
+png("before norm.png", width = 1000, height = 500)
+box_plot_data<-as.data.frame(log2(x))
+par(mar=c(5,6,4,1)+.1)
+boxplot(box_plot_data, main="Before background correction and normalisation",
+xlab="Samples",ylab=expression('log'[2]*'(expression)'),cex=0.5, par(cex.lab=1.5),par(cex.axis=1.5))
+dev.off()
+
+```
+ 
+ 
+```{r}
+# read in annotation Illumina Annotation file
+ annot <- illuminaio::readBGX('Annot/HumanHT-12_V4_0_R2_15002873_B.bgx')$probes
+  annot <- annot[,which(colnames(annot) %in% c('Source','Symbol','Transcript','ILMN_Gene','RefSeq_ID',
+    'Entrez_Gene_ID','Symbol','Protein_Product','Probe_Id','Probe_Type',
+    'Probe_Start','Chromosome','Probe_Chr_Orientation','Probe_Coordinates',
+    'Cytoband', 'Definition', 'Ontology_Component', 'Ontology_Process',
+    'Ontology_Function', 'Synonyms'))]
+  annot <- annot[which(annot$Probe_Id %in% rownames(x)),]
+  annot <- annot[match(rownames(x), annot$Probe_Id),]
+```
+
+
+```{r}
+# read in target file, this file contains the information about the timepoint and diet group
+targets <- read.csv('datasets/targets.csv')
+```
+
+
+```{r}
+# create a custom EListRaw object
+  project <- new('EListRaw')
+  project@.Data[[1]] <- 'illumina'
+  project@.Data[[2]] <- NULL
+  project@.Data[[3]] <- annot
+  project@.Data[[3]] <- NULL
+  project@.Data[[4]] <- x
+  project@.Data[[5]] <- NULL
+  project$E <- x
+  project$targets <- NULL
+  project$genes <- annot
+  project$genes <- NULL
+  project$other$Detection <- detectionpvalues
+```
+
+
+
+# for BeadArrays, background correction and normalisation are handled by a single function: neqc()
+# this is the same as per Agilent single colour arrays
+```{r}
+project.bgcorrect.norm <- neqc(project, offset = 16)
+```
+
+
+```{r}
+# filter out control probes, those with no symbol, and those that failed
+  annot <- annot[which(annot$Probe_Id %in% rownames(project.bgcorrect.norm)),]
+  project.bgcorrect.norm <- project.bgcorrect.norm[which(rownames(project.bgcorrect.norm) %in% annot$Probe_Id),]
+  annot <- annot[match(rownames(project.bgcorrect.norm), annot$Probe_Id),]
+  project.bgcorrect.norm@.Data[[3]] <- annot
+  project.bgcorrect.norm$genes <- annot
+  Control <- project.bgcorrect.norm$genes$Source=="ILMN_Controls"
+  NoSymbol <- project.bgcorrect.norm$genes$Symbol == ""
+  isexpr <- rowSums(project.bgcorrect.norm$other$Detection <= 0.01) >= 5
+  project.bgcorrect.norm.filt <- project.bgcorrect.norm[!Control & !NoSymbol & isexpr, ]
+  dim(project.bgcorrect.norm)
+  dim(project.bgcorrect.norm.filt)
+```
+
+
+```{r}
+# remove annotation columns we no longer need
+  project.bgcorrect.norm.filt$genes <- project.bgcorrect.norm.filt$genes[,c(
+    'Probe_Id', 'Entrez_Gene_ID',
+    'Definition','Ontology_Component','Ontology_Process','Ontology_Function',
+    'Chromosome','Probe_Coordinates','Cytoband','Probe_Chr_Orientation',
+    'RefSeq_ID','Entrez_Gene_ID','Symbol')]
+  head(project.bgcorrect.norm.filt$genes)
+```
+
+
+```{r}
+# summarise across genes by mean
+# ID is used to identify the replicates
+  project.bgcorrect.norm.filt.mean <- avereps(project.bgcorrect.norm.filt,
+    ID = project.bgcorrect.norm.filt$genes$Entrez_Gene_ID)
+  dim(project.bgcorrect.norm.filt.mean)
+```
+
+
+```{r}
+expression_data<-as.data.frame(project.bgcorrect.norm.filt.mean[["E"]])
+```
+
+
+```{r}
+#plot the expression data (before normalisation)
+png("after norm.png", width = 1000, height = 500)
+par(mar=c(5,6,4,1)+.1)
+ boxplot(expression_data, main="After background correction and normalisation",
+xlab="Samples",ylab=expression('log'[2]*'(expression)'),cex=0.5, par(cex.lab=1.5),par(cex.axis=1.5))
+dev.off()
+```
+
+
+```{r}
+#calculate no of samples below p values of 0.01
+boolean_values<-detection_probe<0.01
+
+count_true = data.frame(matrix(NA, nrow = nrow(detection_probe), ncol = 1))
+count_false = data.frame(matrix(NA, nrow =nrow(detection_probe), ncol = 1))
+percent_true = data.frame(matrix(NA, nrow = nrow(detection_probe), ncol = 1))
+
+for (row in 1:nrow(detection_probe)){
+  count_true[row,1]<-length(boolean_values[row,][boolean_values[row,]==TRUE])
+  count_false[row,1]<-length(boolean_values[row,][boolean_values[row,]==FALSE])
+  percent_true[row,1]<-count_true[row,1]*100/54
+}
+```
+
+
+```{r}
+#ouput the normalized data
+write.table(expression_data, "normalised-data.txt", na ="", row.names=TRUE,  sep='\t', quote=FALSE)
+```
+
+
+```{r}
+# input normalized data, generate an ExpressionSet object for illumina analysis, extract sample name
+
+
+trans_data <- read.table("normalised-data.txt", header = TRUE, sep = '\t', stringsAsFactors = FALSE)
+trans_matrix <- as.matrix(trans_data)
+eset <- ExpressionSet(trans_matrix, annotation=rownames(trans_data))
+samples_name <- data.frame(sampleID = colnames(trans_data), stringsAsFactors = FALSE)
+```
+
+```{r}
+#extract categories for design matrix
+Timepoint_diet <- paste(targets$Timepoint, targets$Diet, sep=".")
+Timepoint_diet<- factor(Timepoint_diet, levels=c("baseline.Ex_diet", "end.Ex_diet", "baseline.C_diet", "end.C_diet"))
+```
+
+
+```{r}
+#Make design matrix and fit model
+design <- model.matrix(~0+Timepoint_diet)
+colnames(design)<-levels(Timepoint_diet)
+fit <- lmFit(eset, design)
+```
+
+```{r}
+#Make contrast matrix 
+cont.matrix <- makeContrasts(
+  ExDiet_end_vs_baseline=end.Ex_diet-baseline.Ex_diet, 
+  CDiet_end_vs_baseline=end.C_diet-baseline.C_diet,
+  levels=design) 
+fit2 <- contrasts.fit(fit, cont.matrix) 
+fit2 <- eBayes(fit2)
+TopTable_Ex_diet <- topTable(fit2, adjust.method="BH", coef="ExDiet_end_vs_baseline", number=Inf)
+TopTable_C_diet <- topTable(fit2, adjust.method="BH", coef="CDiet_end_vs_baseline", number=Inf)
+```
+
+
+
+
+```{r}
+# Add the Entrez Gene IDs as a column to the TopTables
+TopTable_Ex_diet <- rownames_to_column(TopTable_Ex_diet, "Entrez_ID" )
+TopTable_C_diet <- rownames_to_column(TopTable_C_diet, "Entrez_ID")
+
+subset_annot <- subset(annot, select = c(Entrez_Gene_ID, Symbol))
+subset_annot <- unique(subset_annot)
+
+TopTable_Ex_diet <- merge(TopTable_Ex_diet, subset_annot, by.x="Entrez_ID", by.y="Entrez_Gene_ID")
+TopTable_C_diet <- merge(TopTable_C_diet, subset_annot, by.x="Entrez_ID", by.y="Entrez_Gene_ID")
+```
+
+
+
+```{r}
+write.table(TopTable_Ex_diet, file = "TopTable_Ex-diet.csv", sep=",", row.names=FALSE)
+write.table(TopTable_C_diet, file = "TopTable_C-diet.csv", sep=",", row.names=FALSE)
+```
+

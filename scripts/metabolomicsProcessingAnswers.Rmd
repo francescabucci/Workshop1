@@ -1,0 +1,290 @@
+---
+title: "metabolomicsProcessingDIY"
+author: 
+- "DeniseSl22"
+- "YourGithubUserName"
+date: "17/05/24"
+output:
+ md_document:
+    variant: markdown_github
+always_allow_html: true
+---
+## Introduction
+In this section of the workflow, we will obtain the metabolomics data and apply filtering options, to create a dataset ready for further statistical and pathway analysis (on Thursday).
+
+## First, we setup the required libraries to get started.
+```{r setup, warning=FALSE, message=FALSE}
+# check if libraries are already installed > otherwise install it
+if(!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager",repos = "http://cran.us.r-project.org")
+if(!"dplyr" %in% installed.packages()) BiocManager::install("dplyr")
+if(!"stringr" %in% installed.packages()){install.packages("stringr")}
+#load libraries
+library(dplyr)
+library(stringr)
+```
+
+## Locate the data (in the file explorer) and load it in R
+```{r}
+if(!"readxl" %in% installed.packages()){install.packages("readxl")}
+library("readxl")
+
+dataLocation <- paste0(getwd(), '/Data/NoMa_NMR_intervention_GEOcodes_Sent Susan.xlsx')
+metabolomicsData <- read_excel(dataLocation, 1)  # for first tab
+
+#Make a copy of the data to compare against if needed
+metabolomicsDataCopy <- metabolomicsData
+```
+
+## Second programming tasks: check NAs
+```{r}
+#Use the search box to find sample ‘2_A5’
+
+# Convert the textual 'NA' labels with the real NA (not available)
+metabolomicsData[metabolomicsData == "NA"] <- NA
+
+# Check how many NAs are part of sample '2_A5'.
+sum(is.na(metabolomicsData$`Sample name` == "2_A5")) ##Answer is 98
+
+# Install the required package
+if(!"heatmaply" %in% installed.packages()){install.packages("heatmaply")}
+library("heatmaply")
+
+# Visualize this information in a heatmap
+heatmaply::heatmaply(is.na10(metabolomicsData[,3:100], grid_gap = 1, colors = heat.colors(200), showticklabels = c(T, F), margins = c(80, 10)))
+```
+
+## Third programming tasks check data correlations
+```{r}
+# Make sure all data is captured as numbers (numeric!)
+metabolomicsData <- data.frame(metabolomicsData[,1:2], lapply(metabolomicsData[,3:length(metabolomicsData)],as.numeric))
+
+# Remove rows with too many NAs
+metabolomicsData <- metabolomicsData[complete.cases(metabolomicsData[ , 3:length(metabolomicsData)]),]
+
+# Visualize all information in a heatmap
+heatmaply::heatmaply(metabolomicsData[,3:100], grid_gap = 0, colors = heat.colors(200), showticklabels = c(T, F), margins = c(80, 10))
+```
+
+## Fourth programming tasks: check data distribution
+```{r}
+# Filter out data if the 'Sample name' column is NA 
+metabolomicsData <- subset(metabolomicsData, !is.na(metabolomicsData$Sample.name))
+
+# Inspect the remaining samples names; do any stand out (in a negative way)? If yes, remove these
+metabolomicsData <- subset(metabolomicsData, metabolomicsData$Sample.name != 'missing Gex')
+
+# Download the file 'targets.csv' from Surfdrive, add this to the Data folder, and change the location of data you want to load
+dataLocation <- paste0(getwd(), '/Data/targets.csv')
+
+# Load the targets data
+treatmentData <- read.csv(dataLocation, header = TRUE)
+
+# Clean up the sample names (since they are not the same for metabolomics)
+treatmentData$SampleName<-gsub("X","",as.character(treatmentData$SampleName)) #Remove the 'X' from sample names
+treatmentData$SampleName<-gsub("\\..*","",as.character(treatmentData$SampleName)) #Remove all data after the '.'
+treatmentData$Timepoint<-gsub("line","",as.character(treatmentData$Timepoint)) #Remove the word 'line' in the second column (Timepoint)
+
+#rename columns of treatmentData to match with metabolomics data
+colnames(treatmentData) <- c("Sample.name","Timepoint","Diet" )
+
+# Finally, combine this data (specifically column 3 from targets data) with the metabolomics data
+metabolomicsDataGroups <- merge(treatmentData, metabolomicsData,by="Sample.name")
+
+#Sanity check: do all the timepoints (base,end) from treatmentData match with the metabolomics data time column
+all(metabolomicsDataGroups$Timepoint == metabolomicsDataGroups$time) ##If this is FALSE, please check your data against the Copy you made at the start.
+
+#Count number of columns
+##columns <- ncol(metabolomicsDataGroups) ##To apply transformation on all columns
+columns <- 102
+
+##Transformation (see https://doi.org/10.1177%2F1469066720918446 and https://www.statology.org/transform-data-in-r/)
+##Users can select different transformation styles here:
+transformation <- "cube_root" # options are: log_2, log_10, square_root, cube_root
+
+if(transformation == "cube_root"){
+    metabolomicsDataGroups_transformed <- cbind(metabolomicsDataGroups[,c(1:4)], metabolomicsDataGroups[,5:columns]^(1/3))
+}else if(transformation == "square_root"){
+    metabolomicsDataGroups_transformed <- cbind(metabolomicsDataGroups[,c(1:4)], metabolomicsDataGroups[,5:columns]^(1/2))
+}else if(transformation == "log_2"){
+    metabolomicsDataGroups_transformed <- cbind(metabolomicsDataGroups[,c(1:4)], log2(metabolomicsDataGroups[,5:columns]))
+}else if(transformation == "log_10"){
+    metabolomicsDataGroups_transformed <- cbind(metabolomicsDataGroups[,c(1:4)], log10(metabolomicsDataGroups[,5:columns]))
+}else{print("Warning: name for transformation not recognized")}
+
+## Visualize the data before and after transformation (for one sample to get an idea of suitability of transformation:
+#create histogram for original distribution for first column with data
+hist(metabolomicsDataGroups[,5], col='steelblue', main='Original')
+#create histogram for log-transformed distribution 
+hist(metabolomicsDataGroups_transformed[,5], col='coral2', main=transformation)
+
+## Test if the transformation creates a normally distributed dataset (alpha >= 0.05)
+##Calculate all Shapiro values for raw and transformed data:
+metabolomicsDataGroups_Shapiro <- lapply(metabolomicsDataGroups[,5:columns], shapiro.test)
+metabolomicsDataGroups_transformed_Shapiro <- lapply(metabolomicsDataGroups_transformed[,5:columns], shapiro.test)
+
+#Obtain the p-values for raw and transformed data
+metabolomicsDataGroups_Shapiro_pvalues <- do.call(rbind, metabolomicsDataGroups_Shapiro)
+metabolomicsDataGroups_transformed_Shapiro_pvalues <- do.call(rbind, metabolomicsDataGroups_transformed_Shapiro)
+
+## Count how often the p-value is above 0.05, to obtain an estimate of achieved normality due to transformation
+metabolomicsDataGroups_Shapiro_pvalues_sum <- sum(metabolomicsDataGroups_Shapiro_pvalues[,2] >= 0.05, na.rm=TRUE)
+metabolomicsDataGroups_transformed_Shapiro_pvalues_sum <- sum(metabolomicsDataGroups_transformed_Shapiro_pvalues[,2] >= 0.05, na.rm=TRUE)
+
+percentageThreshold <- floor(((columns)/10)*7.5) #Now set at 75% (7.5); can be strickter if the data permits this.
+
+#Print relevant information:
+if(metabolomicsDataGroups_transformed_Shapiro_pvalues_sum[1] > percentageThreshold ){paste0("Data after ", transformation ," transformation seems to follow a normal distribution for 75% or more of your data")} else{
+  print("Advised to select a different data transformation procedure")}
+
+# Visualize all information in a heatmap
+heatmaply::heatmaply(metabolomicsDataGroups_transformed[,5:columns], grid_gap = 0, colors = heat.colors(200), showticklabels = c(T, F), margins = c(80, 10))
+```
+
+# Find Outliers by visualising violin plots (combination of boxplot and Kernel plot)
+```{r}
+# Libraries (dplyr already previously loaded but also important)
+if(!"ggplot2" %in% installed.packages()){install.packages("ggplot2")}
+library(ggplot2)
+if(!"forcats" %in% installed.packages()){install.packages("forcats")}
+library(forcats)
+if(!"hrbrthemes" %in% installed.packages()){install.packages("hrbrthemes")}
+library(hrbrthemes)
+if(!"viridis" %in% installed.packages()){install.packages("viridis")}
+library(viridis)
+if(!"ggbeeswarm" %in% installed.packages()){install.packages("ggbeeswarm")}
+library(ggbeeswarm)
+
+##### Example data to check if setup of packages is correct #####
+# Load dataset from github
+data <- read.table("https://raw.githubusercontent.com/holtzy/data_to_viz/master/Example_dataset/10_OneNumSevCatSubgroupsSevObs.csv", header=T, sep=",") %>%
+  mutate(tip = round(tip/total_bill*100, 1))
+  
+# Grouped
+data %>%
+  mutate(day = fct_reorder(day, tip)) %>%
+  mutate(day = factor(day, levels=c("Thur", "Fri", "Sat", "Sun"))) %>%
+  ggplot(aes(fill=sex, y=tip, x=day)) + 
+    geom_violin(position="dodge", alpha=0.5, outlier.colour="transparent") +
+    scale_fill_viridis(discrete=T, name="") +
+    theme_ipsum()  +
+    xlab("") +
+    ylab("Tip (%)") +
+    ylim(0,40)
+```
+
+# Find Outliers by visualising violin plots on own data
+```{r}
+##### Example data to check if setup of packages is correct #####
+# Load dataset from github
+data <- read.table("https://raw.githubusercontent.com/holtzy/data_to_viz/master/Example_dataset/10_OneNumSevCatSubgroupsSevObs.csv", header=T, sep=",") %>%
+  mutate(tip = round(tip/total_bill*100, 1))
+
+lipidClassName <- 'IDL.L'
+columnNumber <- which( colnames(metabolomicsDataGroups_transformed)==lipidClassName )
+maxVerticalAxis <- max(metabolomicsDataGroups_transformed[,columnNumber])
+  
+# Grouped
+metabolomicsDataGroups_transformed %>%
+  mutate(Diet =  fct_reorder(Diet, IDL.L)) %>%
+  mutate(Diet = factor(Diet, levels=c("Control", "Experimental"))) %>%
+  ggplot(aes(fill=Diet, y=IDL.L, x=time)) + 
+    geom_violin(position="dodge", alpha=0.5, trim = FALSE, scale = "count") +
+    geom_quasirandom() + ##Alternativ geom_beeswarm() + 
+    scale_fill_viridis(discrete=T, name="Timepoints") +
+    theme_ipsum()  +
+    xlab(lipidClassName) +
+    ylab("Measurement (transformed)") +
+    ylim(0,maxVerticalAxis)
+```
+
+
+# Visualising ratio data
+```{r}
+ratios <- ncol(metabolomicsDataGroups)
+
+# Visualize all information in a heatmap (remember that the ratio data was not transformed!)
+heatmaply::heatmaply(metabolomicsDataGroups[,columns:ratios], grid_gap = 0, colors = heat.colors(200), showticklabels = c(T, F), margins = c(80, 10))
+```
+
+
+# Comparing treated to control group
+```{r}
+##Order columns based on Diet column (located in column names);
+mSet_FINAL <- metabolomicsDataGroups_transformed[order(metabolomicsDataGroups_transformed$Diet),]
+
+##Create one dataframe for the control group:
+mSet_control <- subset(mSet_FINAL, mSet_FINAL$Diet == 'C_diet')
+#Size of control group:
+mSet_control_size <- nrow(mSet_control)
+
+##Create another dataframe for the treated group:
+mSet_treated <- subset(mSet_FINAL, mSet_FINAL$Diet == 'Ex_diet')
+#Size of experimental group:
+mSet_treated_size <- nrow(mSet_treated)
+
+# The groups are of unequal size (which you would normally want to compensate for; we will take the data as it is)
+##The unpaired two-samples t-test is used to compare the mean of two independent groups.
+# T-test for one specified column:
+#tTestresults <- t.test(mSet_control$XXL.VLDL.P, mSet_treated$XXL.VLDL.P, alternative = "two.sided", var.equal = FALSE)
+
+# Ttest for all columns:
+grp <-mSet_FINAL$Diet
+tests_list <- lapply(names(mSet_FINAL[5:ncol(mSet_FINAL)]), function(x) t.test(as.formula(paste0(x, "~ grp")), data = mSet_FINAL[,5:ncol(mSet_FINAL)]))
+
+result <- do.call(rbind, lapply(tests_list, `[[`, "estimate"))
+pval <- sapply(tests_list, `[[`, "p.value")
+result <- cbind(names(mSet_FINAL[5:ncol(mSet_FINAL)]), result, p.value = pval)
+
+```
+
+
+# Use Bubble chart to inspect cleaned up data from Nightingale
+```{r}
+if(!"bubbleHeatmap" %in% installed.packages()){install.packages("bubbleHeatmap")}
+library(bubbleHeatmap)
+
+##### Example data to check if setup of packages is correct #####
+
+#> Loading required package: grid
+#> 
+myData <- merge_template(cetp, "ckb_id")
+metabTree <- metabFigure(myData)
+
+gridData <- formatData(myData, colorValue="estimate", sizeValue = "negLog10P", nightingale = TRUE)
+
+treeInput <- multiPlotInput(colorList=gridData$colorList, 
+                            sizeList=gridData$sizeList, 
+                            nightingale=TRUE, legendHeight=8)
+
+treeList <- bubbleHeatmapList(treeInput)
+
+metabTree <- metabFigurePlot(treeList)
+
+grid.newpage()
+grid.draw(metabTree)
+```
+
+
+# Use Bubble chart to inspect cleaned up data from Nightingale on own data TODO
+```{r}
+if(!"bubbleHeatmap" %in% installed.packages()){install.packages("bubbleHeatmap")}
+library(bubbleHeatmap)
+
+##### Example data to check if setup of packages is correct #####
+
+#myData <- merge_template(cetp, "ckb_id")
+#metabTree <- metabFigure(metabolomicsDataGroups_transformed)
+
+#gridData <- formatData(myData, colorValue="estimate", sizeValue = "negLog10P", nightingale = TRUE)
+
+#treeInput <- multiPlotInput(colorList=gridData$colorList, 
+#                            sizeList=gridData$sizeList, 
+#                            nightingale=TRUE, legendHeight=8)
+
+#treeList <- bubbleHeatmapList(treeInput)
+
+#metabTree <- metabFigurePlot(treeList)
+
+#grid.newpage()
+#grid.draw(metabTree)
+```
