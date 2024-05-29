@@ -78,6 +78,23 @@ autoplot(PCA, label = TRUE, label.size = 3)
 metadata <- read.table(file = 'SraRunTable_Diet.txt', sep = ",", header = TRUE)
 ```
 
+```{r}
+#extract the dietary intervention group from the metadata
+groups <- factor(metadata$diet_intervention)
+```
+
+
+```{r}
+#create a dataframe that includes the PCA results and group information
+pca_df <- as.data.frame(PCA$x)
+pca_df$Group <- groups
+```
+
+
+```{r}
+#plot the PCA with group information
+autoplot(PCA, data = pca_df, colour="Group", label=TRUE, label.size = 3)
+```
 
 #Task 4: Check if the metadata file is correctly loaded!
 
@@ -114,9 +131,9 @@ write.csv(DEG, file = "DEG_LPvsHP.csv")
 #all significantly changed genes, all significantly upregulated genes, all significantly downregulated genes
 SigDEG <- DEG[DEG$pvalue < 0.05,]
 write.csv(SigDEG, file = "SigDEG_LPvsHP.csv")
-SigUP <- DEG[DEG$pvalue < 0.05 & DEG$log2FoldChange > 1,]
+SigUP <- DEG[DEG$pvalue < 0.05 & DEG$log2FoldChange > 0.26,]
 write.csv(SigUP, file = "SigUP_LPvsHP.csv")
-SigDOWN <- DEG[DEG$pvalue < 0.05 & DEG$log2FoldChange < -1,]
+SigDOWN <- DEG[DEG$pvalue < 0.05 & DEG$log2FoldChange < -0.26,]
 write.csv(SigDOWN, file = "SigDOWN_LPvsHP.csv")
 ```
 
@@ -138,8 +155,8 @@ par(mfrow=c(1,1))
 # Make a basic volcano plot
 with(DEG, plot(log2FoldChange, -log10(pvalue), pch=20, main="Volcano plot", xlim=c(-6,6)))
 # Add colored points: blue if log2FC < -1 and padj<0.05 and red if log2FC > 1 and padj<0.05)
-with(subset(DEG, padj<0.05 & log2FoldChange < -1), points(log2FoldChange, -log10(pvalue), pch=20, col="blue"))
-with(subset(DEG, padj<0.05 & log2FoldChange > 1), points(log2FoldChange, -log10(pvalue), pch=20, col="red"))
+with(subset(DEG, padj<0.05 & log2FoldChange < -0.26), points(log2FoldChange, -log10(pvalue), pch=20, col="blue"))
+with(subset(DEG, padj<0.05 & log2FoldChange > 0.26), points(log2FoldChange, -log10(pvalue), pch=20, col="red"))
 ```
 
 
@@ -156,7 +173,9 @@ boxplot(log(dds_n))
 
 ```{r}
 PCA <- prcomp(t(dds_n))
-autoplot(PCA, label = TRUE, label.size = 3)
+pca_df <- as.data.frame(PCA$x)
+pca_df$Group <- groups
+autoplot(PCA, data = pca_df, colour="Group",label = TRUE, label.size = 3)
 ```
 
 #Task 9: Provide the PCA plot to the table from task 3. Whats the difference?

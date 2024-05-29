@@ -161,6 +161,8 @@ project.bgcorrect.norm <- neqc(project, offset = 16)
 
 ```{r}
 expression_data<-as.data.frame(project.bgcorrect.norm.filt.mean[["E"]])
+
+detection_probe <- as.data.frame(project.bgcorrect.norm.filt.mean[["other"]][["Detection"]])
 ```
 
 
